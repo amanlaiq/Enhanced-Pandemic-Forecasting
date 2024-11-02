@@ -4,8 +4,12 @@ import numpy as np
 import scipy.sparse as sp
 import pandas as pd
 
-from datetime import date, timedelta
+from context_data_fetcher import generate_contextual_embeddings
 
+from datetime import date, timedelta
+import requests
+from transformers import pipeline
+from sklearn.preprocessing import MinMaxScaler
 import os
     
 
@@ -61,7 +65,7 @@ def generate_features(graphs: list,
     return features
 
 
-import numpy as np
+
 
 def generate_new_features(graphs: list, labels: list, dates: list, window=7, scaled=False, trend=False):
     """
@@ -174,6 +178,44 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
 
     return adj_lst, features_lst, y_lst
 
+def fetch_contextual_data(api_key, query, region, source='GNews'):
+    """Fetch recent news or tweets about COVID-19 for a given region."""
+    if source == 'GNews':
+        url = f'https://gnews.io/api/v4/search?q={query}&lang=en&country={region}&token={api_key}'
+    elif source == 'Twitter':
+        url = f'https://api.twitter.com/2/tweets/search/recent?query={query}%20place_country:{region}&tweet.fields=created_at&expansions=geo.place_id&user.fields=location'
+    headers = {"Authorization": f"Bearer {api_key}"} if source == 'Twitter' else {}
+    response = requests.get(url, headers=headers)
+    return response.json() if response.status_code == 200 else None
+
+def process_text_data(text_data):
+    """Generate embeddings using a pre-trained language model."""
+    nlp_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = [nlp_model(text)[0][0] for text in text_data]  # Get the first embedding from each text
+    return np.mean(embeddings, axis=0)  # Return the average embedding for stability
+
+def enrich_features_with_context(existing_node_features, region_names):
+    """Enrich existing node features with contextual embeddings."""
+    contextual_embeddings = []
+    gnews_api_key = "35a6730b2d0f416c626b30fdcefdd616"
+    twitter_api_key = "T7NzGEV9wkce3EjtIlJBSvZ9T"
+
+    for region in region_names:
+        # Fetch data
+        news_data = fetch_contextual_data(gnews_api_key, "COVID-19", region, source='GNews')
+        tweet_data = fetch_contextual_data(twitter_api_key, "COVID-19", region, source='Twitter')
+        
+        # Collect text snippets from fetched data
+        texts = [item['title'] for item in news_data['articles']] + [tweet['text'] for tweet in tweet_data['data']]
+        
+        # Generate embeddings for the texts
+        region_embedding = process_text_data(texts)
+        contextual_embeddings.append(region_embedding)
+
+    contextual_embeddings = MinMaxScaler().fit_transform(contextual_embeddings)
+    enriched_node_features = np.hstack((existing_node_features, contextual_embeddings))
+    
+    return enriched_node_features
 
 def generate_batches(graphs: list, 
                      features: list , 

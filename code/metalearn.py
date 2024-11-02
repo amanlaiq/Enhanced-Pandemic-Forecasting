@@ -25,7 +25,7 @@ import os
 
 from models import MPNN
 import json
-from preprocess import generate_new_features, generate_new_batches, read_meta_datasets, AverageMeter
+from preprocess import generate_new_features, generate_new_batches, read_meta_datasets, AverageMeter, generate_features, enrich_features_with_context
 from llm_integration import generate_prompt, quantize_data  # Adjust the import if necessary
 
 
