@@ -1,63 +1,54 @@
-# context_data_fetcher.py
-
 import requests
-import tweepy
-from transformers import AutoTokenizer, AutoModel
-import torch
+import numpy as np
+from transformers import pipeline
+from sklearn.preprocessing import MinMaxScaler
 
-# Set up API keys
-GNEWS_API_KEY = '35a6730b2d0f416c626b30fdcefdd616'
-TWITTER_API_KEY = 'T7NzGEV9wkce3EjtIlJBSvZ9T'
+# Replace with actual API keys
+GNEWS_API_KEY = "35a6730b2d0f416c626b30fdcefdd616"
+TWITTER_BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAP%2FxwgEAAAAAR993OB%2Fp%2F3pjcm7LOa5xLvqC%2BBc%3D3AmuGD8zBA5Ym6qTCHRxCrVH6LewGeKOIVag0bym6eiugOpa9V"
 
-# Set up Twitter API with Tweepy
-auth = tweepy.AppAuthHandler(TWITTER_API_KEY, '')
-twitter_api = tweepy.API(auth)
+def fetch_contextual_data(api_key, query, region, source='GNews'):
+    """Fetch recent news or tweets about COVID-19 for a given region."""
+    if source == 'GNews':
+        url = f'https://gnews.io/api/v4/search?q={query}&lang=en&country={region}&token={api_key}'
+        headers = {}
+    elif source == 'Twitter':
+        url = f'https://api.twitter.com/2/tweets/search/recent?query={query}%20place_country:{region}&tweet.fields=created_at&expansions=geo.place_id&user.fields=location'
+        headers = {"Authorization": f"Bearer {api_key}"}
+    response = requests.get(url, headers=headers)
+    return response.json() if response.status_code == 200 else None
 
-# Load LLM model and tokenizer for embeddings
-model_name = 'bert-base-uncased'  # Example model
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-llm_model = AutoModel.from_pretrained(model_name)
-llm_model.eval()
-
-def fetch_news(region, query="COVID-19"):
-    """
-    Fetch recent news articles from GNews API related to COVID-19 for the specified region.
-    """
-    url = f"https://gnews.io/api/v4/search?q={query}+{region}&token={GNEWS_API_KEY}&lang=en&max=5"
-    response = requests.get(url)
-    if response.status_code == 200:
-        articles = response.json().get('articles', [])
-        return [article['title'] for article in articles]
-    else:
-        print("Failed to fetch news:", response.status_code)
-        return []
-
-def fetch_twitter_sentiment(region, query="COVID-19"):
-    """
-    Fetch recent tweets related to COVID-19 and region and generate sentiment-based embeddings.
-    """
-    tweets = twitter_api.search(q=f"{query} {region}", lang="en", count=5)
-    tweet_texts = [tweet.text for tweet in tweets]
-    return tweet_texts
-
-def get_text_embedding(text):
-    """
-    Convert text into an embedding using LLM.
-    """
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    with torch.no_grad():
-        embeddings = llm_model(**inputs).last_hidden_state.mean(dim=1)
-    return embeddings.squeeze(0)
+def process_text_data(text_data):
+    """Generate embeddings using a pre-trained language model."""
+    nlp_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = [nlp_model(text)[0][0] for text in text_data]  # Get the first embedding from each text
+    return np.mean(embeddings, axis=0)  # Return the average embedding for stability
 
 def generate_contextual_embeddings(region_names):
-    """
-    Generate contextual embeddings for each region by combining news and sentiment data.
-    """
-    region_embeddings = {}
+    """Generate contextual embeddings for each region based on news and tweets."""
+    contextual_embeddings = []
+
     for region in region_names:
-        news_data = fetch_news(region)
-        sentiment_data = fetch_twitter_sentiment(region)
-        combined_text = " ".join(news_data + sentiment_data)
-        embedding = get_text_embedding(combined_text)
-        region_embeddings[region] = embedding
-    return region_embeddings
+        # Fetch news and tweets
+        news_data = fetch_contextual_data(GNEWS_API_KEY, "COVID-19", region, source='GNews')
+        tweet_data = fetch_contextual_data(TWITTER_BEARER_TOKEN, "COVID-19", region, source='Twitter')
+        
+        # Collect text snippets from fetched data
+        texts = []
+        if news_data:
+            texts.extend([item['title'] for item in news_data.get('articles', [])])
+        if tweet_data:
+            texts.extend([tweet['text'] for tweet in tweet_data.get('data', [])])
+        
+        # Generate embeddings for the texts if any text data is available
+        if texts:
+            region_embedding = process_text_data(texts)
+        else:
+            region_embedding = np.zeros(384)  # Assuming 384-dim for default if no text is available
+
+        contextual_embeddings.append(region_embedding)
+
+    # Scale embeddings and return
+    scaler = MinMaxScaler()
+    contextual_embeddings = scaler.fit_transform(contextual_embeddings)
+    return contextual_embeddings

@@ -25,9 +25,18 @@ import os
 
 from models import MPNN
 import json
-from preprocess import generate_new_features, generate_new_batches, read_meta_datasets, AverageMeter, generate_features, enrich_features_with_context
+# from preprocess import generate_new_features, generate_new_batches, read_meta_datasets, AverageMeter, generate_features
 from llm_integration import generate_prompt, quantize_data  # Adjust the import if necessary
+# from context_data_fetcher import fetch_contextual_data, enrich_features_with_context, process_text_data
 
+from preprocess import (
+    generate_new_features,
+    generate_new_batches,
+    read_meta_datasets,
+    AverageMeter,
+    generate_features,
+)
+from context_data_fetcher import generate_contextual_embeddings
 
 def train( adj, features, y):
     optimizer.zero_grad()
@@ -92,12 +101,23 @@ if __name__ == '__main__':
     # Call read_meta_datasets with the required arguments
     meta_labs, meta_graphs, meta_features, meta_y = read_meta_datasets(args.window, config, country_keys)
 
-    enriched_features = []
-    for region_features, region_name in zip(meta_features, country_keys):
-        enriched_region_features = enrich_features_with_context(region_features, [region_name])
-        enriched_features.append(enriched_region_features)
+    # Generate contextual embeddings for regions and enrich features
+    region_names = ["IT", "ES", "EN", "FR"]
+    contextual_embeddings = generate_contextual_embeddings(region_names)
 
-    meta_features = enriched_features
+    # Enrich each region's features in meta_features
+    enriched_meta_features = []
+    for i, region_features in enumerate(meta_features):
+        enriched_region_features = [
+            np.hstack((feature_array, contextual_embeddings[i].reshape(1, -1).repeat(feature_array.shape[0], axis=0)))
+            for feature_array in region_features
+        ]
+        enriched_meta_features.append(enriched_region_features)
+
+    # Use the enriched features
+    meta_features = enriched_meta_features
+
+
 
     # meta_labs, meta_graphs, meta_features, meta_y = read_meta_datasets(args.window)
 
