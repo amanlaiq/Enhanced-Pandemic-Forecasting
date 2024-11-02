@@ -92,7 +92,13 @@ if __name__ == '__main__':
     # Call read_meta_datasets with the required arguments
     meta_labs, meta_graphs, meta_features, meta_y = read_meta_datasets(args.window, config, country_keys)
 
-    
+    enriched_features = []
+    for region_features, region_name in zip(meta_features, country_keys):
+        enriched_region_features = enrich_features_with_context(region_features, [region_name])
+        enriched_features.append(enriched_region_features)
+
+    meta_features = enriched_features
+
     # meta_labs, meta_graphs, meta_features, meta_y = read_meta_datasets(args.window)
 
     for args.country in ["IT","ES","EN","FR"]:#,",
@@ -321,18 +327,6 @@ if __name__ == '__main__':
                 o = output.cpu().detach().numpy()
                 l = y_test[0].cpu().numpy()
 
-                # Generate prompt text for the LLM
-                # country_name = args.country  # assuming country_name can be accessed from args
-                # prompt_text = generate_prompt(node_embeddings, predictions, historical_data, country_name)
-
-                # # Quantize the GNN predictions for tokenization
-                # tokens = quantize_data(predictions, bins=5)
-
-                # # For debugging and checking
-                # print("Generated Prompt:\n", prompt_text)
-                # print("Quantized Tokens:", tokens)
-
-                #pred_tables[shift][:,test_sample+shift] = o
 
                 #------ Store to map plot                    
                 error = np.sum(abs(o-l))
