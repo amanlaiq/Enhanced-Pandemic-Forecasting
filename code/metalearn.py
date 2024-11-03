@@ -91,23 +91,29 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
 
-    # Load configuration
+        # Load configuration
     with open('config.json', 'r') as config_file:
         config = json.load(config_file)
 
-    # Define country_keys based on the configuration file
-    country_keys = list(config['country_idx'].keys())
+    # Get country keys from config
+    country_keys = list(config['country_idx'].keys())  # Will give ["IT", "ES", "EN", "FR"]
 
     # Call read_meta_datasets with the required arguments
     meta_labs, meta_graphs, meta_features, meta_y = read_meta_datasets(args.window, config, country_keys)
 
-    # Generate contextual embeddings for regions and enrich features
-    region_names = ["IT", "ES", "EN", "FR"]
-    contextual_embeddings = generate_contextual_embeddings(region_names)
+    # Generate contextual embeddings using country keys from config
+    # Generate contextual embeddings with date ranges from config
+    contextual_embeddings = generate_contextual_embeddings(
+    country_keys,
+    start_dates=[f"2020-{m:02d}-{d:02d}" for m, d in zip(config['country_start_month'], config['country_start_day'])],
+    end_dates=[f"2020-{m:02d}-{d:02d}" for m, d in zip(config['country_end_month'], config['country_end_day'])]
+)
 
     # Enrich each region's features in meta_features
     enriched_meta_features = []
     for i, region_features in enumerate(meta_features):
+        # Now we're guaranteed that the index 'i' corresponds to the correct country
+        # because we're using the same order from config['country_idx']
         enriched_region_features = [
             np.hstack((feature_array, contextual_embeddings[i].reshape(1, -1).repeat(feature_array.shape[0], axis=0)))
             for feature_array in region_features
@@ -116,7 +122,6 @@ if __name__ == '__main__':
 
     # Use the enriched features
     meta_features = enriched_meta_features
-
 
 
     # meta_labs, meta_graphs, meta_features, meta_y = read_meta_datasets(args.window)
