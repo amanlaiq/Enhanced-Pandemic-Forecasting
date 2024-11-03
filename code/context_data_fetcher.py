@@ -86,11 +86,10 @@ def process_text_data(text_data, max_length=512):
     return np.mean(embeddings, axis=0)  # Return the average embedding for stability
 
 
-def generate_contextual_embeddings(region_names, start_date="2020-01-01", end_date="2021-12-31"):
+def generate_contextual_embeddings(region_names, start_dates, end_dates):
     """Generate contextual embeddings for each region based on historical news, tweets, and Reddit posts."""
     contextual_embeddings = []
 
-    # Define region-specific subreddits
     region_subreddits = {
     "US": "CoronavirusUS",
     "IT": "italy",
@@ -99,34 +98,34 @@ def generate_contextual_embeddings(region_names, start_date="2020-01-01", end_da
     "FR": "CoronavirusFR"
 }
 
-
-    for region in region_names:
+    for i, region in enumerate(region_names):
         # Initialize an empty list for text data from all sources
         texts = []
 
         # Fetch news data
-        news_data = fetch_contextual_data(GNEWS_API_KEY, "COVID-19", region, source='GNews', start_date=start_date, end_date=end_date)
+        news_data = fetch_contextual_data(
+            GNEWS_API_KEY, "COVID-19", region, source='GNews',
+            start_date=start_dates[i], end_date=end_dates[i]
+        )
         if news_data:
             texts.extend([item['title'] for item in news_data.get('articles', [])])
 
         # Fetch Twitter data
-        tweet_data = fetch_contextual_data(TWITTER_BEARER_TOKEN, "COVID-19", region, source='Twitter', start_date=start_date, end_date=end_date)
+        tweet_data = fetch_contextual_data(
+            TWITTER_BEARER_TOKEN, "COVID-19", region, source='Twitter',
+            start_date=start_dates[i], end_date=end_dates[i]
+        )
         if tweet_data:
             texts.extend([tweet['text'] for tweet in tweet_data.get('data', [])])
 
-        # Fetch Reddit data with error handling for missing subreddits
+        # Fetch Reddit data
         subreddit_name = region_subreddits.get(region, "Coronavirus")
-        try:
-            reddit_posts = fetch_reddit_data(subreddit_name, post_type="top", limit=30)
-        except Exception as e:
-            print(f"Warning: Could not access subreddit '{subreddit_name}' for region '{region}'. Error: {e}")
-            reddit_posts = []  # Set to an empty list if the subreddit is missing or restricted
-
+        reddit_posts = fetch_reddit_data(subreddit_name, post_type="top", limit=30)
         if reddit_posts:
-            reddit_texts = [post.get('title', '') + ' ' + post.get('body', '') for post in reddit_posts]
+            reddit_texts = [post['title'] + ' ' + post['body'] for post in reddit_posts]
             texts.extend(reddit_texts)
 
-            # Gather engagement metrics, using defaults for missing data
+            # Optionally, gather engagement metrics like upvotes and comments
             avg_upvotes = np.mean([post.get('upvotes', 0) for post in reddit_posts])
             avg_comments = np.mean([post.get('comments', 0) for post in reddit_posts])
         else:
@@ -146,6 +145,7 @@ def generate_contextual_embeddings(region_names, start_date="2020-01-01", end_da
     scaler = MinMaxScaler()
     contextual_embeddings = scaler.fit_transform(contextual_embeddings)
     return contextual_embeddings
+
 
 
 # # Example usage:
