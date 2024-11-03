@@ -1,15 +1,16 @@
 import requests
+import torch
 import numpy as np
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModel, pipeline
 from sklearn.preprocessing import MinMaxScaler
 import praw
 from prawcore.exceptions import Redirect
 
 # Replace with actual API keys
 GNEWS_API_KEY = "35a6730b2d0f416c626b30fdcefdd616"
-TWITTER_BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAP%2FxwgEAAAAAR993OB%2Fp%2F3pjcm7LOa5xLvqC%2BBc%3D3AmuGD8zBA5Ym6qTCHRxCrVH6LewGeKOIVag0bym6eiugOpa9V"
-REDDIT_CLIENT_ID = "hF0Ws3F1sqI12JlOXj3ulw"
-REDDIT_CLIENT_SECRET = "zshlI1tBgPVRNf3ZR54e0vnBmUzr7Q"
+TWITTER_BEARER_TOKEN = "YOUR_TWITTER_BEARER_TOKEN"
+REDDIT_CLIENT_ID = "YOUR_REDDIT_CLIENT_ID"
+REDDIT_CLIENT_SECRET = "YOUR_REDDIT_CLIENT_SECRET"
 
 # Initialize Reddit API client
 reddit = praw.Reddit(
@@ -17,6 +18,11 @@ reddit = praw.Reddit(
     client_secret=REDDIT_CLIENT_SECRET,
     user_agent="covid_analysis_app"
 )
+
+# Initialize the language model and tokenizer (BERT-based)
+tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+model = AutoModel.from_pretrained("bert-base-uncased")
+sentiment_pipeline = pipeline("sentiment-analysis")
 
 def fetch_contextual_data(api_key, query, region, source='GNews', start_date=None, end_date=None):
     """Fetch historical news or tweets about COVID-19 for a given region and date range."""
@@ -62,45 +68,45 @@ def fetch_reddit_data(subreddit_name, post_type="top", limit=30):
 
 def process_text_data(text_data, max_length=512):
     """Generate embeddings using a pre-trained language model, handling long inputs."""
-    nlp_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
     embeddings = []
-
     for text in text_data:
-        # Split text into chunks if it's longer than max_length tokens
-        tokenized_text = nlp_model.tokenizer(text, return_tensors="pt", truncation=False)
-        num_tokens = tokenized_text.input_ids.shape[1]
+        # Tokenize and handle long text by chunking
+        tokens = tokenizer(text, return_tensors="pt", truncation=False)
+        num_tokens = tokens.input_ids.shape[1]
 
         if num_tokens > max_length:
-            # Process text in chunks of max_length
+            chunk_embeddings = []
             for i in range(0, num_tokens, max_length):
-                chunk = text[i:i+max_length]
-                chunk_embedding = nlp_model(chunk)[0][0]  # Get embedding for this chunk
-                embeddings.append(chunk_embedding)
-            # Compute the average embedding for all chunks
-            avg_embedding = np.mean(embeddings, axis=0)
+                chunk = tokenizer.decode(tokens.input_ids[0, i:i+max_length])
+                chunk_tokens = tokenizer(chunk, return_tensors="pt")
+                with torch.no_grad():
+                    chunk_embedding = model(**chunk_tokens).last_hidden_state.mean(dim=1).squeeze().numpy()
+                chunk_embeddings.append(chunk_embedding)
+            avg_embedding = np.mean(chunk_embeddings, axis=0)
             embeddings.append(avg_embedding)
         else:
-            # Process normally if text is within max_length
-            embeddings.append(nlp_model(text)[0][0])
+            with torch.no_grad():
+                embedding = model(**tokens).last_hidden_state.mean(dim=1).squeeze().numpy()
+            embeddings.append(embedding)
 
-    return np.mean(embeddings, axis=0)  # Return the average embedding for stability
-
+    return np.mean(embeddings, axis=0)
 
 def generate_contextual_embeddings(region_names, start_dates, end_dates):
     """Generate contextual embeddings for each region based on historical news, tweets, and Reddit posts."""
     contextual_embeddings = []
-
     region_subreddits = {
-    "US": "CoronavirusUS",
-    "IT": "italy",
-    "ES": "spain",
-    "EN": "CoronavirusUK",
-    "FR": "CoronavirusFR"
-}
+        "US": "CoronavirusUS",
+        "IT": "italy",
+        "ES": "spain",
+        "EN": "CoronavirusUK",
+        "FR": "CoronavirusFR"
+    }
 
     for i, region in enumerate(region_names):
         # Initialize an empty list for text data from all sources
         texts = []
+        avg_sentiments = []
+        subreddit_name = region_subreddits.get(region, "Coronavirus")
 
         # Fetch news data
         news_data = fetch_contextual_data(
@@ -108,7 +114,9 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
             start_date=start_dates[i], end_date=end_dates[i]
         )
         if news_data:
-            texts.extend([item['title'] for item in news_data.get('articles', [])])
+            news_texts = [item['title'] for item in news_data.get('articles', [])]
+            texts.extend(news_texts)
+            avg_sentiments.extend(sentiment_pipeline(news_texts))
 
         # Fetch Twitter data
         tweet_data = fetch_contextual_data(
@@ -116,28 +124,32 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
             start_date=start_dates[i], end_date=end_dates[i]
         )
         if tweet_data:
-            texts.extend([tweet['text'] for tweet in tweet_data.get('data', [])])
+            tweet_texts = [tweet['text'] for tweet in tweet_data.get('data', [])]
+            texts.extend(tweet_texts)
+            avg_sentiments.extend(sentiment_pipeline(tweet_texts))
 
         # Fetch Reddit data
-        subreddit_name = region_subreddits.get(region, "Coronavirus")
         reddit_posts = fetch_reddit_data(subreddit_name, post_type="top", limit=30)
         if reddit_posts:
             reddit_texts = [post['title'] + ' ' + post['body'] for post in reddit_posts]
             texts.extend(reddit_texts)
+            avg_sentiments.extend(sentiment_pipeline(reddit_texts))
 
-            # Optionally, gather engagement metrics like upvotes and comments
+            # Gather engagement metrics
             avg_upvotes = np.mean([post.get('upvotes', 0) for post in reddit_posts])
-            avg_comments = np.mean([post.get('comments', 0) for post in reddit_posts])
+            avg_comments = np.mean([post.get('num_comments', 0) for post in reddit_posts])
         else:
             avg_upvotes, avg_comments = 0, 0
 
         # Generate embeddings for the combined text data
         if texts:
             region_embedding = process_text_data(texts)
-            # Add engagement metrics to the feature vector if needed
-            region_embedding = np.append(region_embedding, [avg_upvotes, avg_comments])
+            avg_sentiment_score = np.mean([sent['score'] for sent in avg_sentiments])
+
+            # Append sentiment and engagement metrics
+            region_embedding = np.append(region_embedding, [avg_sentiment_score, avg_upvotes, avg_comments])
         else:
-            region_embedding = np.zeros(384 + 2)  # Assuming 384-dim for text embedding + 2 for engagement metrics
+            region_embedding = np.zeros(768 + 3)  # Assuming 768-dim for BERT embedding + 3 for metrics
 
         contextual_embeddings.append(region_embedding)
 
@@ -145,10 +157,3 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
     scaler = MinMaxScaler()
     contextual_embeddings = scaler.fit_transform(contextual_embeddings)
     return contextual_embeddings
-
-
-
-# # Example usage:
-# region_names = ["US", "IT", "ES"]
-# contextual_embeddings = generate_contextual_embeddings(region_names)
-# print("Contextual Embeddings:\n", contextual_embeddings)
