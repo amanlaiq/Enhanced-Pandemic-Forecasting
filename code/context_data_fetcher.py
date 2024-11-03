@@ -22,7 +22,7 @@ reddit = praw.Reddit(
 # Initialize the language model and tokenizer (BERT-based)
 tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 model = AutoModel.from_pretrained("bert-base-uncased")
-sentiment_pipeline = pipeline("sentiment-analysis")
+sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
 def fetch_contextual_data(api_key, query, region, source='GNews', start_date=None, end_date=None):
     """Fetch historical news or tweets about COVID-19 for a given region and date range."""
@@ -66,7 +66,7 @@ def fetch_reddit_data(subreddit_name, post_type="top", limit=30):
         print(f"Warning: Subreddit '{subreddit_name}' does not exist or is restricted.")
         return []  # Return an empty list if subreddit is unavailable
 
-def process_text_data(text_data, max_length=512):
+def process_text_data(text_data, max_length=510):
     """Generate embeddings using a pre-trained language model, handling long inputs."""
     embeddings = []
     for text in text_data:
@@ -90,6 +90,25 @@ def process_text_data(text_data, max_length=512):
             embeddings.append(embedding)
 
     return np.mean(embeddings, axis=0)
+
+def chunk_text_for_sentiment(text, max_length=510):
+    """Helper function to split text into chunks for sentiment analysis."""
+    tokens = tokenizer(text, truncation=False)["input_ids"]
+    chunks = []
+    for i in range(0, len(tokens), max_length):
+        chunk = tokenizer.decode(tokens[i:i + max_length])
+        chunks.append(chunk)
+    return chunks
+
+def analyze_sentiment(text_data):
+    """Analyze sentiment by chunking long texts."""
+    sentiments = []
+    for text in text_data:
+        chunks = chunk_text_for_sentiment(text)
+        for chunk in chunks:
+            sentiment = sentiment_pipeline(chunk)
+            sentiments.append(sentiment[0]["score"])
+    return sentiments
 
 def generate_contextual_embeddings(region_names, start_dates, end_dates):
     """Generate contextual embeddings for each region based on historical news, tweets, and Reddit posts."""
@@ -116,7 +135,7 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
         if news_data:
             news_texts = [item['title'] for item in news_data.get('articles', [])]
             texts.extend(news_texts)
-            avg_sentiments.extend(sentiment_pipeline(news_texts))
+            avg_sentiments.extend(analyze_sentiment(news_texts))
 
         # Fetch Twitter data
         tweet_data = fetch_contextual_data(
@@ -126,14 +145,14 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
         if tweet_data:
             tweet_texts = [tweet['text'] for tweet in tweet_data.get('data', [])]
             texts.extend(tweet_texts)
-            avg_sentiments.extend(sentiment_pipeline(tweet_texts))
+            avg_sentiments.extend(analyze_sentiment(tweet_texts))
 
         # Fetch Reddit data
         reddit_posts = fetch_reddit_data(subreddit_name, post_type="top", limit=30)
         if reddit_posts:
             reddit_texts = [post['title'] + ' ' + post['body'] for post in reddit_posts]
             texts.extend(reddit_texts)
-            avg_sentiments.extend(sentiment_pipeline(reddit_texts))
+            avg_sentiments.extend(analyze_sentiment(reddit_texts))
 
             # Gather engagement metrics
             avg_upvotes = np.mean([post.get('upvotes', 0) for post in reddit_posts])
@@ -144,7 +163,7 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
         # Generate embeddings for the combined text data
         if texts:
             region_embedding = process_text_data(texts)
-            avg_sentiment_score = np.mean([sent['score'] for sent in avg_sentiments])
+            avg_sentiment_score = np.mean(avg_sentiments) if avg_sentiments else 0
 
             # Append sentiment and engagement metrics
             region_embedding = np.append(region_embedding, [avg_sentiment_score, avg_upvotes, avg_comments])
