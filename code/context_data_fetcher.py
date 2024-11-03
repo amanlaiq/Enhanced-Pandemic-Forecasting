@@ -60,11 +60,31 @@ def fetch_reddit_data(subreddit_name, post_type="top", limit=30):
         print(f"Warning: Subreddit '{subreddit_name}' does not exist or is restricted.")
         return []  # Return an empty list if subreddit is unavailable
 
-def process_text_data(text_data):
-    """Generate embeddings using a pre-trained language model."""
+def process_text_data(text_data, max_length=512):
+    """Generate embeddings using a pre-trained language model, handling long inputs."""
     nlp_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
-    embeddings = [nlp_model(text)[0][0] for text in text_data]  # Get the first embedding from each text
+    embeddings = []
+
+    for text in text_data:
+        # Split text into chunks if it's longer than max_length tokens
+        tokenized_text = nlp_model.tokenizer(text, return_tensors="pt", truncation=False)
+        num_tokens = tokenized_text.input_ids.shape[1]
+
+        if num_tokens > max_length:
+            # Process text in chunks of max_length
+            for i in range(0, num_tokens, max_length):
+                chunk = text[i:i+max_length]
+                chunk_embedding = nlp_model(chunk)[0][0]  # Get embedding for this chunk
+                embeddings.append(chunk_embedding)
+            # Compute the average embedding for all chunks
+            avg_embedding = np.mean(embeddings, axis=0)
+            embeddings.append(avg_embedding)
+        else:
+            # Process normally if text is within max_length
+            embeddings.append(nlp_model(text)[0][0])
+
     return np.mean(embeddings, axis=0)  # Return the average embedding for stability
+
 
 def generate_contextual_embeddings(region_names, start_date="2020-01-01", end_date="2021-12-31"):
     """Generate contextual embeddings for each region based on historical news, tweets, and Reddit posts."""
@@ -72,11 +92,13 @@ def generate_contextual_embeddings(region_names, start_date="2020-01-01", end_da
 
     # Define region-specific subreddits
     region_subreddits = {
-        "US": "Coronavirus",
-        "IT": "CoronavirusItaly",
-        "ES": "CoronavirusSpain",
-        # Add more region-specific subreddits as needed
-    }
+    "US": "CoronavirusUS",
+    "IT": "italy",
+    "ES": "spain",
+    "EN": "CoronavirusUK",
+    "FR": "CoronavirusFR"
+}
+
 
     for region in region_names:
         # Initialize an empty list for text data from all sources
@@ -92,16 +114,21 @@ def generate_contextual_embeddings(region_names, start_date="2020-01-01", end_da
         if tweet_data:
             texts.extend([tweet['text'] for tweet in tweet_data.get('data', [])])
 
-        # Fetch Reddit data
+        # Fetch Reddit data with error handling for missing subreddits
         subreddit_name = region_subreddits.get(region, "Coronavirus")
-        reddit_posts = fetch_reddit_data(subreddit_name, post_type="top", limit=30)
+        try:
+            reddit_posts = fetch_reddit_data(subreddit_name, post_type="top", limit=30)
+        except Exception as e:
+            print(f"Warning: Could not access subreddit '{subreddit_name}' for region '{region}'. Error: {e}")
+            reddit_posts = []  # Set to an empty list if the subreddit is missing or restricted
+
         if reddit_posts:
-            reddit_texts = [post['title'] + ' ' + post['body'] for post in reddit_posts]
+            reddit_texts = [post.get('title', '') + ' ' + post.get('body', '') for post in reddit_posts]
             texts.extend(reddit_texts)
 
-            # Optionally, gather engagement metrics like upvotes and comments
-            avg_upvotes = np.mean([post['upvotes'] for post in reddit_posts])
-            avg_comments = np.mean([post['comments'] for post in reddit_posts])
+            # Gather engagement metrics, using defaults for missing data
+            avg_upvotes = np.mean([post.get('upvotes', 0) for post in reddit_posts])
+            avg_comments = np.mean([post.get('comments', 0) for post in reddit_posts])
         else:
             avg_upvotes, avg_comments = 0, 0
 
@@ -119,6 +146,7 @@ def generate_contextual_embeddings(region_names, start_date="2020-01-01", end_da
     scaler = MinMaxScaler()
     contextual_embeddings = scaler.fit_transform(contextual_embeddings)
     return contextual_embeddings
+
 
 # # Example usage:
 # region_names = ["US", "IT", "ES"]
