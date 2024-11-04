@@ -8,9 +8,35 @@ import scipy.sparse as sp
 from sklearn import preprocessing
 from sklearn.preprocessing import MinMaxScaler
 from statsmodels.tsa.arima.model import ARIMA
+from torch_geometric.nn import GATConv
 import pandas as pd
 
+class GATModel(nn.Module):
+    def __init__(self, nfeat, nhid, nout, dropout, heads=1):
+        """
+        Graph Attention Network (GAT) model.
+        
+        Parameters:
+        - nfeat (int): Number of input features per node.
+        - nhid (int): Number of hidden units.
+        - nout (int): Number of output features per node.
+        - dropout (float): Dropout rate.
+        - heads (int): Number of attention heads.
+        """
+        super(GATModel, self).__init__()
+        self.gat1 = GATConv(nfeat, nhid, heads=heads, dropout=dropout)
+        self.gat2 = GATConv(nhid * heads, nout, heads=1, concat=False, dropout=dropout)
+        
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
 
+    def forward(self, x, edge_index):
+        x = self.gat1(x, edge_index)
+        x = self.relu(x)
+        x = self.dropout(x)
+        
+        x = self.gat2(x, edge_index)
+        return x
             
 def arima(ahead: int,
           start_exp: int,
