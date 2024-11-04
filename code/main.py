@@ -51,7 +51,7 @@ def experiment(args, config):
         fw = open("../results/results_"+country+".csv","a")
 
         
-        for args.model in ["MPNN", "MPNN_LSTM", "LSTM","ARIMA", "AVG_WINDOW", "AVG"]:
+        for args.model in ["MPNN", "MPNN_LSTM", "LSTM","ARIMA", "AVG_WINDOW", "AVG", "GAT"]:
             
             #---- ARIMA predicts by default all days until ahead
             if(args.model=="ARIMA"):
