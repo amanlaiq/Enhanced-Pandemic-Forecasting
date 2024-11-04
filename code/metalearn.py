@@ -120,6 +120,15 @@ if __name__ == '__main__':
         ]
         enriched_meta_features.append(enriched_region_features)
 
+    combined_features = [
+    np.vstack([np.hstack((core, context)) for core, context in zip(region_features, enriched_meta_features[i])])
+    for i, region_features in enumerate(meta_features)
+]
+
+    # Normalize across all combined features for each region in the batch
+    scaler = MinMaxScaler()  # or StandardScaler()
+    normalized_features = [scaler.fit_transform(features) for features in combined_features]
+
     # Use the enriched features
     meta_features = enriched_meta_features
 

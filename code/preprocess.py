@@ -64,12 +64,9 @@ def generate_features(graphs: list,
         
     return features
 
-
-
-
 def generate_new_features(graphs: list, labels: list, dates: list, window=7, scaled=False, trend=False):
     """
-    Generate enhanced node features.
+    Generate enhanced node features with optional normalization and trend features.
 
     Parameters:
     graphs (list): List of graphs.
@@ -80,29 +77,27 @@ def generate_new_features(graphs: list, labels: list, dates: list, window=7, sca
     trend (bool): Whether to include trend features.
 
     Returns:
-    features (list): List of enhanced features.
+    features (list): List of normalized features.
     """
     features = []
-
-    # Clone labels to avoid modifying the original data
     labs = labels.copy()
+    
+    # Initialize scaler only if scaled=True
+    scaler = MinMaxScaler() if scaled else None
 
     for idx, G in enumerate(graphs):
-        # Initialize feature matrix with shape (nodes, window)
         H = np.zeros((G.number_of_nodes(), window))
 
-        # Calculate mean and standard deviation for scaling
+        # Calculate mean and standard deviation for scaling if needed
         mean_cases = labs.loc[:, dates[:idx]].mean(1) if scaled else None
         std_cases = labs.loc[:, dates[:idx]].std(1) + 1 if scaled else None
 
         for i, node in enumerate(G.nodes()):
             if idx < window:
-                # Use only available data if window exceeds data range
                 H[i, window - idx:] = labs.loc[node, dates[:idx]]
                 if scaled:
                     H[i, window - idx:] = (labs.loc[node, dates[:idx]] - mean_cases[node]) / std_cases[node]
             else:
-                # Populate full window range
                 H[i, :] = labs.loc[node, dates[idx - window:idx]]
                 if scaled:
                     H[i, :] = (labs.loc[node, dates[idx - window:idx]] - mean_cases[node]) / std_cases[node]
@@ -111,9 +106,14 @@ def generate_new_features(graphs: list, labels: list, dates: list, window=7, sca
             if trend and idx >= 2:
                 H[i, -1] = labs.loc[node, dates[idx - 1]] - labs.loc[node, dates[idx - 2]]
 
+        # Apply normalization if scaled is True
+        if scaled:
+            H = scaler.fit_transform(H)
+
         features.append(H)
 
     return features
+
 
 import torch
 import scipy.sparse as sp
