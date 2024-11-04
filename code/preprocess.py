@@ -120,10 +120,9 @@ import scipy.sparse as sp
 
 def generate_new_batches(graphs: list, features: list, y: list, idx: list, 
                          graph_window: int, shift: int, batch_size: int, 
-                         device: torch.device, test_sample: int):
+                         device: torch.device, test_sample: int, use_edge_index=False):
     """
-    Generate batches with enhanced features for MPNN.
-
+    Generate batches with enhanced features for MPNN or GAT.
     Parameters:
     graphs (list): List of graphs.
     features (list): List of enhanced features.
@@ -144,6 +143,7 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
     n_nodes = graphs[0].shape[0]
   
     adj_lst = []
+    edge_index_lst = []
     features_lst = []
     y_lst = []
 
@@ -152,8 +152,8 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
         step = n_nodes * graph_window
 
         adj_tmp = []
+        edge_index_tmp = []
         features_tmp = np.zeros((n_nodes_batch, features[0].shape[1]))
-
         y_tmp = np.zeros((min(i + batch_size, N) - i) * n_nodes)
 
         # Fill the input for each batch
@@ -161,7 +161,12 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
             val = idx[j]
 
             for e2, k in enumerate(range(val - graph_window + 1, val + 1)):
-                adj_tmp.append(graphs[k - 1].T)
+                if use_edge_index:
+                    edge_index = torch.tensor(np.array(graphs[k - 1].T.nonzero()), dtype=torch.long)
+                    edge_index_tmp.append(edge_index)
+                else:
+                    adj_tmp.append(graphs[k - 1].T)
+
                 features_tmp[(e1 * step + e2 * n_nodes):(e1 * step + (e2 + 1) * n_nodes), :] = features[k]
 
             # Label handling, ensuring we don’t exceed test sample range
@@ -170,52 +175,18 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
             else:
                 y_tmp[(n_nodes * e1):(n_nodes * (e1 + 1))] = y[val]
 
-        # Convert to sparse matrix and transfer to device
-        adj_tmp = sp.block_diag(adj_tmp)
-        adj_lst.append(sparse_mx_to_torch_sparse_tensor(adj_tmp).to(device))
+        # Store edge_index or adj based on model
+        if use_edge_index:
+            edge_index_lst.append(edge_index_tmp)
+        else:
+            adj_tmp = sp.block_diag(adj_tmp)
+            adj_lst.append(sparse_mx_to_torch_sparse_tensor(adj_tmp).to(device))
+
         features_lst.append(torch.FloatTensor(features_tmp).to(device))
         y_lst.append(torch.FloatTensor(y_tmp).to(device))
 
-    return adj_lst, features_lst, y_lst
+    return (edge_index_lst, features_lst, y_lst) if use_edge_index else (adj_lst, features_lst, y_lst)
 
-# def fetch_contextual_data(api_key, query, region, source='GNews'):
-#     """Fetch recent news or tweets about COVID-19 for a given region."""
-#     if source == 'GNews':
-#         url = f'https://gnews.io/api/v4/search?q={query}&lang=en&country={region}&token={api_key}'
-#     elif source == 'Twitter':
-#         url = f'https://api.twitter.com/2/tweets/search/recent?query={query}%20place_country:{region}&tweet.fields=created_at&expansions=geo.place_id&user.fields=location'
-#     headers = {"Authorization": f"Bearer {api_key}"} if source == 'Twitter' else {}
-#     response = requests.get(url, headers=headers)
-#     return response.json() if response.status_code == 200 else None
-
-# def process_text_data(text_data):
-#     """Generate embeddings using a pre-trained language model."""
-#     nlp_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
-#     embeddings = [nlp_model(text)[0][0] for text in text_data]  # Get the first embedding from each text
-#     return np.mean(embeddings, axis=0)  # Return the average embedding for stability
-
-# def enrich_features_with_context(existing_node_features, region_names):
-#     """Enrich existing node features with contextual embeddings."""
-#     contextual_embeddings = []
-#     gnews_api_key = "35a6730b2d0f416c626b30fdcefdd616"
-#     twitter_api_key = "T7NzGEV9wkce3EjtIlJBSvZ9T"
-
-#     for region in region_names:
-#         # Fetch data
-#         news_data = fetch_contextual_data(gnews_api_key, "COVID-19", region, source='GNews')
-#         tweet_data = fetch_contextual_data(twitter_api_key, "COVID-19", region, source='Twitter')
-        
-#         # Collect text snippets from fetched data
-#         texts = [item['title'] for item in news_data['articles']] + [tweet['text'] for tweet in tweet_data['data']]
-        
-#         # Generate embeddings for the texts
-#         region_embedding = process_text_data(texts)
-#         contextual_embeddings.append(region_embedding)
-
-#     contextual_embeddings = MinMaxScaler().fit_transform(contextual_embeddings)
-#     enriched_node_features = np.hstack((existing_node_features, contextual_embeddings))
-    
-#     return enriched_node_features
 
 def generate_batches(graphs: list, 
                      features: list , 
