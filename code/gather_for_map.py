@@ -9,7 +9,7 @@ import numpy as np
 import os
 
 from functools import reduce
-from pandemic_tgnn.code.preprocess import generate_graphs_britain, generate_graphs_by_day
+from preprocess import generate_graphs_britain, generate_graphs_by_day
 
 
 step = 5
