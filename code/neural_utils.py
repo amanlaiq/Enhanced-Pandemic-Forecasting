@@ -32,6 +32,8 @@ def train(model: torch.nn.Module ,
     """
     optimizer.zero_grad()
     output = model(adj, features)
+    if output.size(0) != y.size(0):  
+        y = y.view(-1).repeat((output.size(0) // y.size(0)) + 1)[:output.size(0)]
     loss_train = F.mse_loss(output, y)
     loss_train.backward(retain_graph=True)
     optimizer.step()
@@ -57,6 +59,8 @@ def test(model: torch.nn.Module,
     loss_test (torch.Tensor): Loss of the model
     """    
     output = model(adj, features)
+    if output.size(0) != y.size(0):  # Ensure y has the same size as output
+        y = y.view(-1).repeat((output.size(0) // y.size(0)) + 1)[:output.size(0)]
     loss_test = F.mse_loss(output, y)
     return output, loss_test
 
