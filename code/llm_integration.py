@@ -37,7 +37,6 @@ def generate_prompt(node_embeddings, predictions, historical_data, country_name)
     return prompt
 
 
-
 def quantize_data(predictions, bins=5):
     """
     Quantizes GNN prediction data into discrete tokens for LLM compatibility.
