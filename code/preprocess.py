@@ -118,6 +118,9 @@ def generate_new_features(graphs: list, labels: list, dates: list, window=7, sca
 import torch
 import scipy.sparse as sp
 
+import scipy.sparse as sp
+import torch
+
 def generate_new_batches(graphs: list, features: list, y: list, idx: list, 
                          graph_window: int, shift: int, batch_size: int, 
                          device: torch.device, test_sample: int, use_edge_index=False):
@@ -141,7 +144,7 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
     """
     N = len(idx)
     n_nodes = graphs[0].shape[0]
-  
+
     adj_lst = []
     edge_index_lst = []
     features_lst = []
@@ -154,12 +157,11 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
         adj_tmp = []
         edge_index_tmp = []
         features_tmp = np.zeros((n_nodes_batch, features[0].shape[1]))
-        y_tmp = np.zeros((min(i + batch_size, N) - i) * n_nodes)
+        y_tmp = np.zeros((n_nodes_batch,))  # Update y_tmp shape to match features_tmp
 
         # Fill the input for each batch
         for e1, j in enumerate(range(i, min(i + batch_size, N))):
             val = idx[j]
-
             for e2, k in enumerate(range(val - graph_window + 1, val + 1)):
                 if use_edge_index:
                     edge_index = torch.tensor(np.array(graphs[k - 1].T.nonzero()), dtype=torch.long)
@@ -171,11 +173,10 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
 
             # Label handling, ensuring we don’t exceed test sample range
             if test_sample > 0 and val + shift < test_sample:
-                y_tmp[(n_nodes * e1):(n_nodes * (e1 + 1))] = y[val + shift]
+                y_tmp[(e1 * step):(e1 * step + n_nodes * graph_window)] = y[val + shift]
             else:
-                y_tmp[(n_nodes * e1):(n_nodes * (e1 + 1))] = y[val]
+                y_tmp[(e1 * step):(e1 * step + n_nodes * graph_window)] = y[val]
 
-        # Store edge_index or adj based on model
         if use_edge_index:
             edge_index_lst.append(edge_index_tmp)
         else:
@@ -188,15 +189,9 @@ def generate_new_batches(graphs: list, features: list, y: list, idx: list,
     return (edge_index_lst, features_lst, y_lst) if use_edge_index else (adj_lst, features_lst, y_lst)
 
 
-def generate_batches(graphs: list, 
-                     features: list , 
-                     y: list , 
-                     idx: list , 
-                     graph_window: int, 
-                     shift: int, 
-                     batch_size: int, 
-                     device: torch.device, 
-                     test_sample: int):
+def generate_batches(graphs: list, features: list, y: list, idx: list, 
+                     graph_window: int, shift: int, batch_size: int, 
+                     device: torch.device, test_sample: int):
     """
     Generate batches for graphs for MPNN
 
@@ -220,46 +215,79 @@ def generate_batches(graphs: list,
     y_lst (list): List of labels
 
     """
-
     N = len(idx)
     n_nodes = graphs[0].shape[0]
-  
-    adj_lst = list()
-    features_lst = list()
-    y_lst = list()
+
+    adj_lst = []
+    features_lst = []
+    y_lst = []
 
     for i in range(0, N, batch_size):
-        n_nodes_batch = (min(i+batch_size, N)-i)*graph_window*n_nodes
-        step = n_nodes*graph_window
+        n_nodes_batch = (min(i + batch_size, N) - i) * graph_window * n_nodes
+        step = n_nodes * graph_window
 
-        adj_tmp = list()
+        adj_tmp = []
         features_tmp = np.zeros((n_nodes_batch, features[0].shape[1]))
+        y_tmp = np.zeros((n_nodes_batch,))  # Update y_tmp shape to match features_tmp
 
-        y_tmp = np.zeros((min(i+batch_size, N)-i)*n_nodes)
-
-        #fill the input for each batch
-        for e1,j in enumerate(range(i, min(i+batch_size, N) )):
+        # Fill the input for each batch
+        for e1, j in enumerate(range(i, min(i + batch_size, N))):
             val = idx[j]
+            for e2, k in enumerate(range(val - graph_window + 1, val + 1)):
+                adj_tmp.append(graphs[k - 1].T)
+                features_tmp[(e1 * step + e2 * n_nodes):(e1 * step + (e2 + 1) * n_nodes), :] = features[k]
 
-            # E.g. feature[10] containes the previous 7 cases of y[10]
-            for e2,k in enumerate(range(val-graph_window+1,val+1)):
-                
-                adj_tmp.append(graphs[k-1].T)  
-                # each feature has a size of n_nodes
-                features_tmp[(e1*step+e2*n_nodes):(e1*step+(e2+1)*n_nodes),:] = features[k]
-            
-            
-            if(test_sample>0):
-                #--- val is by construction less than test sample
-                if(val+shift<test_sample):
-                    y_tmp[(n_nodes*e1):(n_nodes*(e1+1))] = y[val+shift]
-                    
-                else:
-                    y_tmp[(n_nodes*e1):(n_nodes*(e1+1))] = y[val]
-                             
+            # Label handling, ensuring we don’t exceed test sample range
+            if test_sample > 0 and val + shift < test_sample:
+                y_tmp[(e1 * step):(e1 * step + n_nodes * graph_window)] = y[val + shift]
             else:
-                y_tmp[(n_nodes*e1):(n_nodes*(e1+1))] = y[val+shift]
-        
+                y_tmp[(e1 * step):(e1 * step + n_nodes * graph_window)] = y[val + shift]
+
+        adj_tmp = sp.block_diag(adj_tmp)
+        adj_lst.append(sparse_mx_to_torch_sparse_tensor(adj_tmp).to(device))
+        features_lst.append(torch.FloatTensor(features_tmp).to(device))
+        y_lst.append(torch.FloatTensor(y_tmp).to(device))
+
+    return adj_lst, features_lst, y_lst
+import scipy.sparse as sp
+import torch
+
+def generate_batches(graphs: list, features: list, y: list, idx: list, 
+                     graph_window: int, shift: int, batch_size: int, 
+                     device: torch.device, test_sample: int):
+    """
+    Generate batches for graphs for MPNN
+    """
+    N = len(idx)
+    n_nodes = graphs[0].shape[0]
+
+    adj_lst = []
+    features_lst = []
+    y_lst = []
+
+    for i in range(0, N, batch_size):
+        n_nodes_batch = (min(i + batch_size, N) - i) * graph_window * n_nodes
+        step = n_nodes * graph_window
+
+        adj_tmp = []
+        features_tmp = np.zeros((n_nodes_batch, features[0].shape[1]))
+        y_tmp = np.zeros((n_nodes_batch,))  # Update y_tmp shape to match features_tmp
+
+        # Fill the input for each batch
+        for e1, j in enumerate(range(i, min(i + batch_size, N))):
+            val = idx[j]
+            for e2, k in enumerate(range(val - graph_window + 1, val + 1)):
+                adj_tmp.append(graphs[k - 1].T)
+                features_tmp[(e1 * step + e2 * n_nodes):(e1 * step + (e2 + 1) * n_nodes), :] = features[k]
+
+            # Ensure label_data is a NumPy array
+            label_data = np.array(y[val + shift])
+            if label_data.shape[0] < n_nodes * graph_window:
+                # Repeat or tile the label to match required shape
+                label_data = np.tile(label_data, int(np.ceil(n_nodes * graph_window / label_data.shape[0])))[:n_nodes * graph_window]
+            
+            y_tmp[(e1 * step):(e1 * step + n_nodes * graph_window)] = label_data
+
         adj_tmp = sp.block_diag(adj_tmp)
         adj_lst.append(sparse_mx_to_torch_sparse_tensor(adj_tmp).to(device))
         features_lst.append(torch.FloatTensor(features_tmp).to(device))
