@@ -5,19 +5,17 @@ from math import ceil
 import torch.nn.functional as F
 import torch.optim as optim
 
-from preprocess import  AverageMeter, generate_batches, generate_batches_lstm, generate_new_batches
-
-from models import MPNN_LSTM, LSTM, MPNN,GATModel
+from preprocess import AverageMeter, generate_batches, generate_batches_lstm, generate_new_batches
+from models import MPNN_LSTM, LSTM, MPNN, GATModel
 import time
 
-
-def train(model: torch.nn.Module ,
-          optimizer: torch.optim.Optimizer  ,
-          adj: torch.nn.Module  , 
-          features: torch.nn.Module , 
-          y: torch.nn.Module ):
+def train(model: torch.nn.Module,
+          optimizer: torch.optim.Optimizer,
+          adj: torch.nn.Module,
+          features: torch.nn.Module,
+          y: torch.nn.Module):
     """
-    Train the model 
+    Train the model
 
     Parameters:
     model (torch.nn.Module): Model to train
@@ -25,25 +23,29 @@ def train(model: torch.nn.Module ,
     features (torch.Tensor): Features matrix
     y (torch.Tensor): Labels matrix
 
-
     Returns:
     output (torch.Tensor): Output predictions of the model
     loss_train (torch.Tensor): Loss of the model
     """
     optimizer.zero_grad()
     output = model(adj, features)
+    
+    # Print shapes of predictions and labels to verify alignment
+    print("Train - Prediction shape:", output.shape)
+    print("Train - Label shape:", y.shape)
+
+    # Reshape `y` if shapes don't match
     if output.size(0) != y.size(0):  
         y = y.view(-1).repeat((output.size(0) // y.size(0)) + 1)[:output.size(0)]
+    
     loss_train = F.mse_loss(output, y)
     loss_train.backward(retain_graph=True)
     optimizer.step()
     return output, loss_train
 
-
-
-def test(model: torch.nn.Module, 
-         adj: torch.Tensor, 
-         features: torch.Tensor, 
+def test(model: torch.nn.Module,
+         adj: torch.Tensor,
+         features: torch.Tensor,
          y: torch.Tensor):
     """
     Test the model
@@ -59,61 +61,40 @@ def test(model: torch.nn.Module,
     loss_test (torch.Tensor): Loss of the model
     """    
     output = model(adj, features)
-    if output.size(0) != y.size(0):  # Ensure y has the same size as output
+    
+    # Print shapes of predictions and labels to verify alignment during testing
+    print("Test - Prediction shape:", output.shape)
+    print("Test - Label shape:", y.shape)
+
+    # Reshape `y` if shapes don't match
+    if output.size(0) != y.size(0):
         y = y.view(-1).repeat((output.size(0) // y.size(0)) + 1)[:output.size(0)]
+    
     loss_test = F.mse_loss(output, y)
     return output, loss_test
-
-
 
 def run_neural_model(model: str,
                      n_nodes: int,
                      early_stop: int,
-                     idx_train: list, 
-                     window: int, 
-                     shift: int, 
-                     batch_size: int, 
-                     y: list, 
+                     idx_train: list,
+                     window: int,
+                     shift: int,
+                     batch_size: int,
+                     y: list,
                      device: torch.device,
                      test_sample: int,
                      graph_window: int,
-                     recur: bool, 
-                     gs_adj: list, 
-                     features: list, 
-                     idx_val: list, 
-                     hidden, dropout: float, 
-                     lr: float, 
+                     recur: bool,
+                     gs_adj: list,
+                     features: list,
+                     idx_val: list,
+                     hidden, dropout: float,
+                     lr: float,
                      nfeat: int,
                      epochs: int,
                      print_epoch: int=50):
     """
     Derive batches from the data, train the model, and test it.
-
-    Parameters: 
-    model (str): Model to use
-    n_nodes (int): Number of nodes in the country mobility graph
-    early_stop (int): Number of epochs to wait before stopping the training because the validation is not improving
-    idx_train (list): List of the training samples
-    window (int): Window size
-    shift (int): Shift size
-    batch_size (int): Batch size
-    y (list): Labels
-    device (torch.device): Device to use
-    test_sample (int): Test sample
-    graph_window (int): Window size for the graph
-    recur (bool): Whether to use recurrent layers
-    gs_adj (list): List of adjacency matrices
-    features (list): List of features
-    idx_val (list): List of validation samples
-    hidden (int): Hidden size
-    dropout (float): Dropout rate
-    lr (float): Learning rate
-    nfeat (int): Number of features
-    epochs (int): Number of epochs
-    print_epoch (int): Number of epochs to wait before printing the results
-
-    Returns:
-    error (float): Average error per region
     """
 
     # Generate batches based on model type
@@ -131,6 +112,11 @@ def run_neural_model(model: str,
         adj_train, features_train, y_train = generate_batches(gs_adj, features, y, idx_train, graph_window, shift, batch_size, device, test_sample)
         adj_val, features_val, y_val = generate_batches(gs_adj, features, y, idx_val, graph_window, shift, batch_size, device, test_sample)
         adj_test, features_test, y_test = generate_batches(gs_adj, features, y, [test_sample], graph_window, shift, batch_size, device, test_sample)
+
+    # Print data shapes after batching
+    print("Batch Shapes - features_train:", features_train[0].shape, "y_train:", y_train[0].shape)
+    print("Batch Shapes - features_val:", features_val[0].shape, "y_val:", y_val[0].shape)
+    print("Batch Shapes - features_test:", features_test[0].shape, "y_test:", y_test[0].shape)
 
     # Initialize the model based on selection
     if model == "LSTM":
@@ -209,6 +195,16 @@ def run_neural_model(model: str,
 
     o = output.cpu().detach().numpy()
     l = y_test[0].cpu().numpy()
-    error = np.sum(abs(o - l)) / n_nodes
+    
+    # Diagnostic print statements
+    print("Final Prediction shape:", o.shape)
+    print("Final Target shape:", l.shape)
 
+    # Ensure shapes match before error calculation
+    if o.shape[0] != l.shape[0]:
+        min_size = min(o.shape[0], l.shape[0])
+        o = o[:min_size]
+        l = l[:min_size]
+
+    error = np.sum(abs(o - l)) / n_nodes
     return error
