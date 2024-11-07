@@ -7,7 +7,7 @@ import torch.optim as optim
 
 from preprocess import AverageMeter, generate_batches, generate_batches_lstm, generate_new_batches
 from models import MPNN_LSTM, LSTM, MPNN, GATModel
-import time
+import time 
 
 def train(model: torch.nn.Module,
           optimizer: torch.optim.Optimizer,
@@ -30,9 +30,9 @@ def train(model: torch.nn.Module,
     optimizer.zero_grad()
     output = model(adj, features)
     
-    # Print shapes of predictions and labels to verify alignment
-    print("Train - Prediction shape:", output.shape)
-    print("Train - Label shape:", y.shape)
+    # # Print shapes of predictions and labels to verify alignment
+    # print("Train - Prediction shape:", output.shape)
+    # print("Train - Label shape:", y.shape)
 
     # Reshape `y` if shapes don't match
     if output.size(0) != y.size(0):  
@@ -62,9 +62,9 @@ def test(model: torch.nn.Module,
     """    
     output = model(adj, features)
     
-    # Print shapes of predictions and labels to verify alignment during testing
-    print("Test - Prediction shape:", output.shape)
-    print("Test - Label shape:", y.shape)
+    # # Print shapes of predictions and labels to verify alignment during testing
+    # print("Test - Prediction shape:", output.shape)
+    # print("Test - Label shape:", y.shape)
 
     # Reshape `y` if shapes don't match
     if output.size(0) != y.size(0):
