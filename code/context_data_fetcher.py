@@ -20,8 +20,8 @@ reddit = praw.Reddit(
 )
 
 # Initialize the language model and tokenizer (BERT-based)
-tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-model = AutoModel.from_pretrained("bert-base-uncased")
+tokenizer = AutoTokenizer.from_pretrained("digitalepidemiologylab/covid-twitter-bert-v2")
+model = AutoModel.from_pretrained("digitalepidemiologylab/covid-twitter-bert-v2")
 sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
 def fetch_contextual_data(api_key, query, region, source='GNews', start_date=None, end_date=None):
@@ -109,6 +109,39 @@ def analyze_sentiment(text_data):
             sentiment = sentiment_pipeline(chunk)
             sentiments.append(sentiment[0]["score"])
     return sentiments
+
+from datetime import datetime
+from sklearn.preprocessing import MinMaxScaler
+
+def compute_weights(dates, engagement_scores, base_date=None):
+    """Compute weights based on recency and engagement."""
+    if not base_date:
+        base_date = datetime.now()
+    
+    # Convert dates to days difference from base_date
+    date_diffs = [(base_date - datetime.strptime(date, "%Y-%m-%d")).days for date in dates]
+    
+    # Normalize date differences and engagement scores
+    date_diffs = MinMaxScaler().fit_transform(np.array(date_diffs).reshape(-1, 1)).flatten()
+    engagement_scores = MinMaxScaler().fit_transform(np.array(engagement_scores).reshape(-1, 1)).flatten()
+    
+    # Higher weight for newer dates and higher engagement
+    weights = (1 - date_diffs) + engagement_scores
+    return weights / weights.sum()  # Normalize weights
+
+def process_text_data_weighted(text_data, dates, engagement_scores, max_length=510):
+    """Generate weighted embeddings using a pre-trained language model."""
+    weights = compute_weights(dates, engagement_scores)
+    embeddings = []
+    
+    for i, text in enumerate(text_data):
+        tokens = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length)
+        with torch.no_grad():
+            embedding = model(**tokens).last_hidden_state.mean(dim=1).squeeze().numpy()
+        embeddings.append(embedding * weights[i])
+    
+    return np.sum(embeddings, axis=0)
+
 
 def generate_contextual_embeddings(region_names, start_dates, end_dates):
     """Generate contextual embeddings for each region based on historical news, tweets, and Reddit posts."""
