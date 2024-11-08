@@ -19,7 +19,7 @@ reddit = praw.Reddit(
     user_agent="covid_analysis_app"
 )
 
-# Initialize the language model and tokenizer (BERT-based)
+# Initialize the language model and tokenizer (COVID-specific BERT model)
 tokenizer = AutoTokenizer.from_pretrained("digitalepidemiologylab/covid-twitter-bert-v2")
 model = AutoModel.from_pretrained("digitalepidemiologylab/covid-twitter-bert-v2")
 sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
@@ -110,9 +110,6 @@ def analyze_sentiment(text_data):
             sentiments.append(sentiment[0]["score"])
     return sentiments
 
-from datetime import datetime
-from sklearn.preprocessing import MinMaxScaler
-
 def compute_weights(dates, engagement_scores, base_date=None):
     """Compute weights based on recency and engagement."""
     if not base_date:
@@ -142,7 +139,6 @@ def process_text_data_weighted(text_data, dates, engagement_scores, max_length=5
     
     return np.sum(embeddings, axis=0)
 
-
 def generate_contextual_embeddings(region_names, start_dates, end_dates):
     """Generate contextual embeddings for each region based on historical news, tweets, and Reddit posts."""
     contextual_embeddings = []
@@ -157,6 +153,8 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
     for i, region in enumerate(region_names):
         # Initialize an empty list for text data from all sources
         texts = []
+        dates = []
+        engagement_scores = []
         avg_sentiments = []
         subreddit_name = region_subreddits.get(region, "Coronavirus")
 
@@ -168,6 +166,8 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
         if news_data:
             news_texts = [item['title'] for item in news_data.get('articles', [])]
             texts.extend(news_texts)
+            dates.extend([start_dates[i]] * len(news_texts))
+            engagement_scores.extend([1] * len(news_texts))  # Default engagement score for news
             avg_sentiments.extend(analyze_sentiment(news_texts))
 
         # Fetch Twitter data
@@ -178,6 +178,8 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
         if tweet_data:
             tweet_texts = [tweet['text'] for tweet in tweet_data.get('data', [])]
             texts.extend(tweet_texts)
+            dates.extend([start_dates[i]] * len(tweet_texts))
+            engagement_scores.extend([1] * len(tweet_texts))  # Default engagement score for tweets
             avg_sentiments.extend(analyze_sentiment(tweet_texts))
 
         # Fetch Reddit data
@@ -185,21 +187,21 @@ def generate_contextual_embeddings(region_names, start_dates, end_dates):
         if reddit_posts:
             reddit_texts = [post['title'] + ' ' + post['body'] for post in reddit_posts]
             texts.extend(reddit_texts)
+            dates.extend([start_dates[i]] * len(reddit_texts))
             avg_sentiments.extend(analyze_sentiment(reddit_texts))
 
             # Gather engagement metrics
             avg_upvotes = np.mean([post.get('upvotes', 0) for post in reddit_posts])
             avg_comments = np.mean([post.get('num_comments', 0) for post in reddit_posts])
-        else:
-            avg_upvotes, avg_comments = 0, 0
+            engagement_scores.extend([avg_upvotes + avg_comments] * len(reddit_texts))
 
-        # Generate embeddings for the combined text data
+        # Generate weighted embeddings for the combined text data
         if texts:
-            region_embedding = process_text_data(texts)
+            region_embedding = process_text_data_weighted(texts, dates, engagement_scores)
             avg_sentiment_score = np.mean(avg_sentiments) if avg_sentiments else 0
 
             # Append sentiment and engagement metrics
-            region_embedding = np.append(region_embedding, [avg_sentiment_score, avg_upvotes, avg_comments])
+            region_embedding = np.append(region_embedding, [avg_sentiment_score, np.mean(engagement_scores), len(texts)])
         else:
             region_embedding = np.zeros(768 + 3)  # Assuming 768-dim for BERT embedding + 3 for metrics
 
