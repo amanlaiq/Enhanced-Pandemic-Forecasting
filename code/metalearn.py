@@ -95,14 +95,10 @@ if __name__ == '__main__':
     with open('config.json', 'r') as config_file:
         config = json.load(config_file)
 
-    # Get country keys from config
     country_keys = list(config['country_idx'].keys())  # Will give ["IT", "ES", "EN", "FR"]
 
-    # Call read_meta_datasets with the required arguments
     meta_labs, meta_graphs, meta_features, meta_y = read_meta_datasets(args.window, config, country_keys)
 
-    # Generate contextual embeddings using country keys from config
-    # Generate contextual embeddings with date ranges from config
     contextual_embeddings = generate_contextual_embeddings(
     country_keys,
     start_dates=[f"2020-{m:02d}-{d:02d}" for m, d in zip(config['country_start_month'], config['country_start_day'])],
