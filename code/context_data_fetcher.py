@@ -5,6 +5,9 @@ from sklearn.preprocessing import MinMaxScaler
 import praw
 from prawcore.exceptions import Redirect
 import torch
+from datetime import datetime
+from sklearn.preprocessing import MinMaxScaler
+
 
 # Replace with actual API keys
 GNEWS_API_KEY = "35a6730b2d0f416c626b30fdcefdd616"
