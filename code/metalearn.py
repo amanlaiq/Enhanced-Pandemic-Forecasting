@@ -108,8 +108,6 @@ if __name__ == '__main__':
     # Enrich each region's features in meta_features
     enriched_meta_features = []
     for i, region_features in enumerate(meta_features):
-        # Now we're guaranteed that the index 'i' corresponds to the correct country
-        # because we're using the same order from config['country_idx']
         enriched_region_features = [
             np.hstack((feature_array, contextual_embeddings[i].reshape(1, -1).repeat(feature_array.shape[0], axis=0)))
             for feature_array in region_features
@@ -122,14 +120,10 @@ if __name__ == '__main__':
 ]
 
     # Normalize across all combined features for each region in the batch
-    scaler = MinMaxScaler()  # or StandardScaler()
+    scaler = MinMaxScaler()
     normalized_features = [scaler.fit_transform(features) for features in combined_features]
 
-    # Use the enriched features
     meta_features = enriched_meta_features
-
-
-    # meta_labs, meta_graphs, meta_features, meta_y = read_meta_datasets(args.window)
 
     for args.country in ["IT","ES","EN","FR"]:#,",
 
