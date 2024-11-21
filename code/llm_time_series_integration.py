@@ -1,151 +1,153 @@
-import torch
+import pandas as pd
 import numpy as np
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 from sklearn.preprocessing import KBinsDiscretizer
-from sentence_transformers import SentenceTransformer
+from sklearn.model_selection import train_test_split
+from torch.utils.data import Dataset
+from transformers import (
+    GPT2Tokenizer,
+    GPT2LMHeadModel,
+    Trainer,
+    TrainingArguments,
+    DataCollatorForLanguageModeling,
+)
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-# Load necessary models and tokenizer
-token = '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'
-tokenizer = AutoTokenizer.from_pretrained("gpt2", token=token)
-llm_model = AutoModelForCausalLM.from_pretrained("gpt2", token=token)
-sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+# Set the device to MPS if available
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+print(f"Using device: {device}")
 
-def prompt_time_series(data, region, start_date, end_date):
-    """
-    Generates a natural language prompt from time series data.
-    """
-    daily_changes = np.diff(data)
-    percent_changes = (daily_changes / data[:-1]) * 100  # Calculate daily % change
-    prompt = f"From {start_date} to {end_date}, COVID-19 cases in {region} have changed as follows:\n"
-    
-    for i, change in enumerate(percent_changes):
-        day = f"Day {i+1}"  # Or use actual date if available
-        prompt += f"{day}: {'increased' if change > 0 else 'decreased'} by {abs(change):.2f}%.\n"
-
-    prompt += "Based on these trends, forecast the cases for the next few days."
-    return prompt
+# Step 1: Load and Preprocess Data
+def load_data(case_file):
+    case_data = pd.read_csv(case_file, index_col=0)
+    time_series_data = case_data.iloc[:, 1:].values
+    return time_series_data
 
 def quantize_time_series(data, n_bins=10):
-    """
-    Quantizes continuous time series data into discrete tokens for LLM processing.
-    """
-    discretizer = KBinsDiscretizer(n_bins=n_bins, encode='ordinal', strategy='uniform')
+    discretizer = KBinsDiscretizer(n_bins=n_bins, encode="ordinal", strategy="uniform")
     data_reshaped = data.reshape(-1, 1)
     quantized_data = discretizer.fit_transform(data_reshaped).flatten()
-    tokens = ["bin_" + str(int(value)) for value in quantized_data]
-    return tokens
+    return quantized_data, discretizer
 
-def align_embeddings(time_series_data, context_data):
+def create_sequences(data, sequence_length=30):
+    inputs, targets = [], []
+    for i in range(len(data) - sequence_length):
+        inputs.append(data[i:i + sequence_length])
+        targets.append(data[i + sequence_length])
+    return np.array(inputs), np.array(targets)
+
+# Step 2: Define Dataset Class
+class TimeSeriesDataset(Dataset):
+    def __init__(self, inputs, targets):
+        assert len(inputs) == len(targets), "Inputs and targets must have the same length"
+        self.inputs = inputs
+        self.targets = targets
+
+    def __len__(self):
+        return len(self.inputs)
+
+    def __getitem__(self, idx):
+        return {
+            "input_ids": torch.tensor(self.inputs[idx], dtype=torch.long),
+            "labels": torch.tensor(self.targets[idx], dtype=torch.long),
+        }
+
+# Step 3: Fine-Tune GPT4TS
+def fine_tune_gpt4ts(X_train, y_train, X_val, y_val, vocab_size):
     """
-    Aligns time series embeddings with LLM embeddings using a sentence transformer model.
+    Fine-tune GPT4TS (GPT-2) on the time-series dataset.
     """
-    # Generate embeddings for time series data
-    time_series_str = " ".join([f"{int(value)}" for value in time_series_data])
-    ts_embedding = sentence_model.encode(time_series_str)
+    # Load GPT-2 tokenizer and model
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token  # Assign PAD token to EOS token
 
-    # Generate embeddings for context data
-    context_embedding = sentence_model.encode(context_data)
-    
-    # Combine embeddings (can use concatenation or averaging)
-    aligned_embedding = np.concatenate((ts_embedding, context_embedding))
-    return aligned_embedding
+    model = GPT2LMHeadModel.from_pretrained("gpt2").to(device)
+    model.resize_token_embeddings(vocab_size)
 
-def combine_with_gnn_embeddings(gnn_embeddings, llm_embeddings):
-    """
-    Combines GNN embeddings with LLM embeddings for enhanced feature representation.
-    """
-    # Ensure both embeddings are in tensor form for PyTorch compatibility
-    gnn_embeddings_tensor = torch.tensor(gnn_embeddings)
-    llm_embeddings_tensor = torch.tensor(llm_embeddings)
+    # Create datasets
+    train_dataset = TimeSeriesDataset(X_train, y_train)
+    val_dataset = TimeSeriesDataset(X_val, y_val)
 
-    # Check if llm_embeddings_tensor has only one dimension and add a new dimension if needed
-    if llm_embeddings_tensor.dim() == 1:
-        llm_embeddings_tensor = llm_embeddings_tensor.unsqueeze(0)  # Add batch dimension if needed
+    # Define Data Collator
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,  # Masked language modeling is disabled for GPT
+    )
 
-    # Repeat or expand llm_embeddings to match gnn_embeddings along batch dimension if necessary
-    if gnn_embeddings_tensor.shape[0] != llm_embeddings_tensor.shape[0]:
-        llm_embeddings_tensor = llm_embeddings_tensor.expand(gnn_embeddings_tensor.shape[0], -1)
-    
-    # Concatenate along the last dimension
-    combined_embeddings = torch.cat((gnn_embeddings_tensor, llm_embeddings_tensor), dim=-1)
-    return combined_embeddings
+    # Training arguments
+    training_args = TrainingArguments(
+        output_dir="./results",
+        evaluation_strategy="epoch",
+        learning_rate=5e-5,
+        per_device_train_batch_size=8,
+        num_train_epochs=3,
+        weight_decay=0.01,
+        save_total_limit=2,
+        logging_dir="./logs",
+        logging_steps=10,
+    )
 
-def run_llm_prediction(prompt):
-    """
-    Uses an LLM to generate a prediction based on a prompt.
-    """
-    inputs = tokenizer(prompt, return_tensors="pt")
-    outputs = llm_model.generate(**inputs, max_new_tokens=50)
-    prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return prediction
+    # Trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        data_collator=data_collator,
+    )
 
-# Main function to integrate with GNN
-def integrate_gnn_with_llm(gnn_embeddings, data, region, start_date, end_date, context_data=None):
-    """
-    Full integration function for GNN and LLM with time series prompting, quantization, and alignment.
-    """
-    # Step 1: Create a prompt from time series data
-    prompt = prompt_time_series(data, region, start_date, end_date)
-    
-    # Step 2: Quantize the time series data for LLM token compatibility
-    quantized_data = quantize_time_series(data)
-    
-    # Step 3: Align embeddings if context data is available
-    llm_embeddings = None
-    if context_data:
-        llm_embeddings = align_embeddings(data, context_data)
-    
-    # Step 4: Combine GNN and LLM embeddings
-    if llm_embeddings is not None:
-        combined_embeddings = combine_with_gnn_embeddings(gnn_embeddings, llm_embeddings)
-    else:
-        combined_embeddings = gnn_embeddings  # Use only GNN if no LLM data available
-    
-    # Step 5: Run LLM prediction based on the prompt
-    prediction = run_llm_prediction(prompt)
-    
-    return {
-        "prompt": prompt,
-        "quantized_data": quantized_data,
-        "combined_embeddings": combined_embeddings,
-        "llm_prediction": prediction
-    }
-    
-def evaluate_model(predictions, targets):
-   
-    # Convert predictions to a numpy array if necessary
-        predictions = np.array(predictions)
-        targets = np.array(targets)
-    
-    # Calculate evaluation metrics
-        mae = np.mean(np.abs(predictions - targets))  # Mean Absolute Error
-        mse = np.mean((predictions - targets) ** 2)  # Mean Squared Error
-        rmse = np.sqrt(mse)  # Root Mean Squared Error
-        mape = np.mean(np.abs((targets - predictions) / targets)) * 100  # Mean Absolute Percentage Error
+    # Fine-tune the model
+    trainer.train()
+    return model
 
-        return {"MAE": mae, "RMSE": rmse, "MAPE": mape}
+# Step 4: Generate Predictions
+def generate_predictions(model, input_sequence, num_predictions):
+    model.eval()
+    input_ids = torch.tensor(input_sequence, dtype=torch.long).unsqueeze(0).to(device)
 
+    predictions = []
+    with torch.no_grad():
+        for _ in range(num_predictions):
+            outputs = model.generate(input_ids, max_new_tokens=1)
+            next_token = outputs[0, -1].item()
+            predictions.append(next_token)
+            input_ids = torch.cat([input_ids, torch.tensor([[next_token]], device=device)], dim=-1)
 
-# Example usage
+    return predictions
+
+# Step 5: Evaluate Model
+def evaluate_model(y_true, y_pred):
+    mse = mean_squared_error(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    return mse, mae
+
+# Step 6: Main Function
+def main():
+    case_file = "/Users/jagritibhandari/Desktop/Pandemic-Forecasting/data/Italy/italy_labels.csv"
+    time_series_data = load_data(case_file)
+    quantized_data, discretizer = quantize_time_series(time_series_data.flatten(), n_bins=50)
+
+    sequence_length = 30
+    X, y = create_sequences(quantized_data, sequence_length)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    print(f"X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
+    print(f"X_val shape: {X_val.shape}, y_val shape: {y_val.shape}")
+
+    vocab_size = len(set(quantized_data))
+    model = fine_tune_gpt4ts(X_train, y_train, X_val, y_val, vocab_size)
+
+    last_sequence = X_val[-1]
+    num_predictions = 10
+    predicted_tokens = generate_predictions(model, last_sequence, num_predictions)
+
+    predicted_values = discretizer.inverse_transform(np.array(predicted_tokens).reshape(-1, 1))
+    print("Predicted values for the next 10 steps:", predicted_values.flatten())
+
+    y_val_decoded = discretizer.inverse_transform(y_val.reshape(-1, 1))
+    mse, mae = evaluate_model(y_val_decoded[:num_predictions], predicted_values)
+    print(f"Mean Squared Error: {mse}")
+    print(f"Mean Absolute Error: {mae}")
+
 if __name__ == "__main__":
-    # Mock data
-    time_series_data = np.array([100, 120, 130, 125, 135, 140, 150, 160, 155, 170])
-    gnn_embeddings = np.random.rand(len(time_series_data), 64)  # Example GNN embeddings
-    region = "Region X"
-    start_date = "March 1"
-    end_date = "March 10"
-    context_data = "Social distancing policies were enacted during this period."
-
-    results = integrate_gnn_with_llm(gnn_embeddings, time_series_data, region, start_date, end_date, context_data)
-    print("Prompt:\n", results["prompt"])
-    print("Quantized Data:\n", results["quantized_data"])
-    print("Combined Embeddings Shape:\n", results["combined_embeddings"].shape)
-    print("LLM Prediction:\n", results["llm_prediction"])
-    true_values = np.array([102, 125, 128, 130, 145, 138, 148, 165, 158, 172])
-
-    # Extract model predictions
-    predictions = results["llm_prediction"]
-
-    # Evaluate accuracy
-    metrics = evaluate_model(predictions, true_values)
-    print("Evaluation Metrics:", metrics)
+    main()
