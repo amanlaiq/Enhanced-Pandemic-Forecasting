@@ -9,11 +9,17 @@ from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
 
 
-# Replace with actual API keys
-GNEWS_API_KEY = "35a6730b2d0f416c626b30fdcefdd616"
-TWITTER_BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAP%2FxwgEAAAAAR993OB%2Fp%2F3pjcm7LOa5xLvqC%2BBc%3D3AmuGD8zBA5Ym6qTCHRxCrVH6LewGeKOIVag0bym6eiugOpa9V"
-REDDIT_CLIENT_ID = "hF0Ws3F1sqI12JlOXj3ulw"
-REDDIT_CLIENT_SECRET = "zshlI1tBgPVRNf3ZR54e0vnBmUzr7Q"
+from dotenv import load_dotenv
+import os
+
+# Load environment variables
+load_dotenv()
+
+# Accessing variables
+GNEWS_API_KEY = os.getenv('GNEWS_API_KEY')
+TWITTER_BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN')
+REDDIT_CLIENT_ID = os.getenv('REDDIT_CLIENT_ID')
+REDDIT_CLIENT_SECRET = os.getenv('REDDIT_CLIENT_SECRET')
 
 # Initialize Reddit API client
 reddit = praw.Reddit(
