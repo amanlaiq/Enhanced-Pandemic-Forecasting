@@ -499,10 +499,11 @@ def main():
     cluster_labels_test = kmeans.predict(X_test_scaled)
     serialized_data_test = serialize_quantized_data(cluster_labels_test, names_test, dates_test)
     llm_models = [
+        "bert-base-uncased",
         "all-MiniLM-L6-v2",
         "paraphrase-MiniLM-L6-v2",
         "distilbert-base-uncased",
-        "all-distilroberta-v1",
+        "all-distilroberta-v1"
     ]
     metrics_list = []
     feature_columns = [f'cases_lag{lag}' for lag in range(1, 4)] + \
